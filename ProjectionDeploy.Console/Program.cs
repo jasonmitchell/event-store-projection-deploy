@@ -10,6 +10,7 @@
     using System.Threading.Tasks;
     using EventStore.ClientAPI;
     using EventStore.ClientAPI.Common.Log;
+    using EventStore.ClientAPI.Exceptions;
     using EventStore.ClientAPI.Projections;
     using EventStore.ClientAPI.SystemData;
     using Newtonsoft.Json;
@@ -21,8 +22,8 @@
 
         static void Main(string[] args)
         {
-            //DeployProjections().Wait();
-            WriteEvents(10).Wait();
+            DeployProjections().Wait();
+            //WriteEvents(10).Wait();
 
             ReadLine();
         }
@@ -32,15 +33,38 @@
             WriteLine("Creating projections...");
 
             var projectionsManager = new ProjectionsManager(new ConsoleLogger(), new IPEndPoint(IPAddress.Parse("192.168.99.100"), 2113), TimeSpan.FromMilliseconds(10000));
+            var credentials = new UserCredentials("admin", "changeit");
             var projections = DiscoverProjections();
 
             foreach (var projection in projections)
             {
-                WriteLine($"\tCreating {projection.Name}...");
-                await projectionsManager.CreateContinuousAsync(projection.Name, projection.Query, new UserCredentials("admin", "changeit"));
+                var projectionExists = await ProjectionExists(projectionsManager, projection.Name, credentials);
+                if (!projectionExists)
+                {
+                    WriteLine($"\tCreating {projection.Name}...");
+                    await projectionsManager.CreateContinuousAsync(projection.Name, projection.Query, credentials);
+                }
+                else
+                {
+                    WriteLine($"\t{projection.Name} already exists.  Skipping create...");
+                }
             }
 
             WriteLine("Finished creating projections");
+        }
+
+        private static async Task<bool> ProjectionExists(ProjectionsManager projectionsManager, string projectionName, UserCredentials credentials)
+        {
+            // There must be a better way...
+            try
+            {
+                await projectionsManager.GetStatusAsync(projectionName, credentials);
+                return true;
+            }
+            catch (ProjectionCommandFailedException)
+            {
+                return false;
+            }
         }
 
         private static IEnumerable<Projection> DiscoverProjections()
